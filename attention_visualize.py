@@ -68,13 +68,6 @@ def create_attention_html(
     print(f"Saved attention HTML to: {html_path}")
 
 def group_subwords_to_words(tokens):
-    """
-    例: BERT系トークンなどで "Hello", "##wor", "##ld" のように分割された場合、
-        ["Hello", "##wor", "##ld"] -> ["Hello", "world"]
-    というふうにまとめるための簡易関数。
-    実際の運用ではトークナイザ設定等に合わせて調整してください。
-    """
-    words = []
     current_word = ""
     for t in tokens:
         if t.startswith("##"):
@@ -87,6 +80,66 @@ def group_subwords_to_words(tokens):
     if current_word:
         words.append(current_word)
     return words
+
+def visualize_attention_as_image_excluding_bos_eos(
+    model_name: str,
+    text: str,
+    layer_index: int = -1,
+    head_index: int = 0,
+    query_token_index: int = None,
+    font_path: str = None,
+    font_size: int = 20,
+    html_path: str = None,
+    max_line_chars: int = 100
+):
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        output_attentions=True,
+        attn_implementation="eager",  # 2023/9月時点 GPT-Neo系など一部モデル用パラメータ
+    )
+    model.eval()
+
+    inputs = tokenizer(text, return_tensors="pt")
+    with torch.no_grad():
+        outputs = model(**inputs, output_attentions=True)
+
+    attentions = outputs.attentions
+    attention_matrix = attentions[layer_index][0, head_index]
+
+    input_ids = inputs["input_ids"][0]
+    tokens = tokenizer.convert_ids_to_tokens(input_ids)
+
+    seq_len = len(tokens)
+
+    bos_id = tokenizer.bos_token_id
+    eos_id = tokenizer.eos_token_id
+
+    exclude_indices = set()
+    for idx, tid in enumerate(input_ids):
+        if bos_id is not None and tid == bos_id:
+            exclude_indices.add(idx)
+        if eos_id is not None and tid == eos_id:
+            exclude_indices.add(idx)
+
+    valid_indices = [i for i in range(seq_len) if i not in exclude_indices]
+    filtered_attention_matrix = attention_matrix[valid_indices][:, valid_indices]
+    filtered_tokens = [tokens[i] for i in valid_indices]
+    if query_token_index is None:
+        attention_scores = filtered_attention_matrix.mean(dim=0).cpu().numpy()
+    else:
+        attention_scores = filtered_attention_matrix[query_token_index].cpu().numpy()
+
+    norm_scores = normalize(attention_scores)
+
+    if html_path is not None:
+        create_attention_html(
+            tokens=filtered_tokens,
+            scores=norm_scores,
+            html_path=html_path,
+            max_tokens_per_line=max_line_chars
+        )
+
 
 def compute_attention_by_gradient(
     model_name: str,
