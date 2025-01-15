@@ -39,11 +39,13 @@
 
 ## ファイル構成
 
-- `attention_visualization.py` (など適宜ファイル名):
+- `attention_visualize.py` :
   - Self-Attention の重み行列を用いた可視化関連の関数
   - 勾配を使ったアテンション可視化 (Attention by Gradient) 関連の関数
   - 補助的な関数 (HTML 生成、カラー変換、正規化など)
 
+- `requirements.txt` :
+  - 依存関係
 - `README.md` (このファイル):
   - リポジトリ概要・使用方法・実行例など
 
@@ -63,15 +65,12 @@ python attention_visualization.py
 ### 2. Gradient による可視化の例
 
 ```bash
-python attention_visualization.py
+python attention_visualize.py
 ```
 
 - `compute_attention_by_gradient()` 関数が呼ばれ、  
   `gradient_attention_demo.html` に勾配ベースの可視化結果が生成されます。
 
-> **Note**: ファイル名やスクリプト名は本リポジトリの構成に合わせて読み替えてください。
-
----
 
 ## 依存関係
 
@@ -79,8 +78,6 @@ python attention_visualization.py
 - [PyTorch](https://pytorch.org/)  
 - [Transformers](https://github.com/huggingface/transformers)  
 - そのほか、HTML 出力のために標準ライブラリのみ利用
-
-以下のように `requirements.txt` があれば参照し、インストールできます。
 
 ```bash
 pip install -r requirements.txt
