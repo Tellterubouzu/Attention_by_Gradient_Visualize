@@ -16,6 +16,16 @@ def score_to_color(score):
     b = int(255 * (1 - score))
     return (r, g, b)
 
+def clean_token(token: str):
+    token = token.replace("Ġ", "")
+    token = token.replace("Ċ", "")
+    token = token.replace("▁", "")
+    token = token.replace("â", "")
+    token = token.replace("Ģ", "")
+    token = token.replace("ľ", "")
+    token = token.replace("Ŀ", "")
+    return token
+
 def create_attention_html(
     tokens, 
     scores, 
@@ -43,15 +53,15 @@ def create_attention_html(
 
     current_line_tokens = 0
     for token, score in zip(tokens, scores):
+        token_for_display = clean_token(token)
         r, g, b = score_to_color(score)
         color_str = f"rgb({r}, {g}, {b})"
         if current_line_tokens >= max_tokens_per_line:
             html_content.append("</tr><tr>")
             current_line_tokens = 0
-
         cell_html = (
             f"<td class='token-cell' style='background-color:{color_str};'>"
-            f"{token}"
+            f"{token_for_display}"
             "</td>"
         )
         html_content.append(cell_html)
@@ -67,20 +77,6 @@ def create_attention_html(
         f.write("\n".join(html_content))
     print(f"Saved attention HTML to: {html_path}")
 
-def group_subwords_to_words(tokens):
-    current_word = ""
-    for t in tokens:
-        if t.startswith("##"):
-            sub = t[2:]
-            current_word += sub
-        else:
-            if current_word:
-                words.append(current_word)
-            current_word = t
-    if current_word:
-        words.append(current_word)
-    return words
-
 def visualize_attention_as_image_excluding_bos_eos(
     model_name: str,
     text: str,
@@ -89,9 +85,13 @@ def visualize_attention_as_image_excluding_bos_eos(
     query_token_index: int = None,
     font_path: str = None,
     font_size: int = 20,
+    save_path: str = "attention_visualization.png",
     html_path: str = None,
     max_line_chars: int = 100
 ):
+    """
+    こちらは既存の「Attentionの重み」を可視化するための関数(コード例)。
+    """
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForCausalLM.from_pretrained(
         model_name,
@@ -101,6 +101,7 @@ def visualize_attention_as_image_excluding_bos_eos(
     model.eval()
 
     inputs = tokenizer(text, return_tensors="pt")
+    print("モデルの読み込み完了")
     with torch.no_grad():
         outputs = model(**inputs, output_attentions=True)
 
@@ -115,6 +116,7 @@ def visualize_attention_as_image_excluding_bos_eos(
     bos_id = tokenizer.bos_token_id
     eos_id = tokenizer.eos_token_id
 
+    # BOS/EOS トークンの index を除外リストへ
     exclude_indices = set()
     for idx, tid in enumerate(input_ids):
         if bos_id is not None and tid == bos_id:
@@ -122,9 +124,14 @@ def visualize_attention_as_image_excluding_bos_eos(
         if eos_id is not None and tid == eos_id:
             exclude_indices.add(idx)
 
+    # 有効なトークンのindexを抽出
     valid_indices = [i for i in range(seq_len) if i not in exclude_indices]
+
+    # アテンション行列も同様にフィルタリング
     filtered_attention_matrix = attention_matrix[valid_indices][:, valid_indices]
     filtered_tokens = [tokens[i] for i in valid_indices]
+
+    # query_token_index が指定されていない場合は全 Query のアテンション平均
     if query_token_index is None:
         attention_scores = filtered_attention_matrix.mean(dim=0).cpu().numpy()
     else:
@@ -141,11 +148,27 @@ def visualize_attention_as_image_excluding_bos_eos(
         )
 
 
+def group_subwords_to_words(tokens):
+    words = []
+    current_word = ""
+    for t in tokens:
+        if t.startswith("##"):
+            sub = t[2:]
+            current_word += sub
+        else:
+            if current_word:
+                words.append(current_word)
+            current_word = t
+    if current_word:
+        words.append(current_word)
+    return words
+
 def compute_attention_by_gradient(
     model_name: str,
     text: str,
     html_path: str = "gradient_attention_demo.html",
     max_line_chars: int = 80,
+    normalization : bool = True,
     do_group_subwords: bool = True
 ):
     tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -157,11 +180,12 @@ def compute_attention_by_gradient(
     outputs = model(input_ids=input_ids, labels=input_ids)
     loss = outputs.loss
     loss.backward()
-    embedding_grad = model.get_input_embeddings().weight.grad  # [vocab_size, hidden_dim]
-    seq_token_ids = input_ids[0]  # (batch_size=1前提)
+    embedding_grad = model.get_input_embeddings().weight.grad
+
+    seq_token_ids = input_ids[0]
     bos_id = tokenizer.bos_token_id
     eos_id = tokenizer.eos_token_id
-    # BOS/EOS は可視化対象から除外
+
     exclude_indices = set()
     for idx, tid in enumerate(seq_token_ids):
         if bos_id is not None and tid.item() == bos_id:
@@ -187,8 +211,7 @@ def compute_attention_by_gradient(
         grouped_grads = []
         tmp_sum = 0.0
         subword_count = 0
-        idx_word = 0
-        current_prefix = None
+
         for t, g in zip(tokens_for_display, token_grads):
             if t.startswith("##"):
                 tmp_sum += g
@@ -203,9 +226,13 @@ def compute_attention_by_gradient(
                 subword_count = 0
         if subword_count > 0:
             grouped_grads[-1] = grouped_grads[-1] + tmp_sum
+
         token_grads = grouped_grads
         tokens_for_display = words
+
     norm_scores = normalize(token_grads)
+    
+
     create_attention_html(
         tokens=tokens_for_display,
         scores=norm_scores,
@@ -216,12 +243,14 @@ def compute_attention_by_gradient(
 
 if __name__ == "__main__":
     text = (
-        "Please explain about Kumamoto prefecture.\nKumamoto is one of the city of Japan. It is famous for Mt.Aso and Kumamoto Castle."
+            """This is a sample sentence of attention by gradient. This method easily visualize how the token imapact generation.
+            """
     )
     compute_attention_by_gradient(
-        model_name=model_name,
+        model_name="meta-llama/Llama-3.1-8B-Instruct",
         text=text,
-        html_path="gradient_attention_demo.html",
-        max_line_chars=20,
-        do_group_subwords=True
+        html_path="gradient_attention_example.html",
+        max_line_chars=15,
+        noemalization = True,
+        do_group_subwords=False
     )
